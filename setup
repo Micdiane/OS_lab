@@ -1,0 +1,8 @@
+# 连接到远程调试服务器
+target remote :1234
+
+# 在函数 _traps 处设置断点
+b __ret_from_fork
+
+# 切换到用户程序的符号文件
+;b  file ./user/uapp.elf

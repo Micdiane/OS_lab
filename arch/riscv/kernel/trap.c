@@ -37,18 +37,19 @@ uint64 sys_clone(struct pt_regs* regs){
 	// printk("new_task->thread.ra = %lx\n", new_task->thread.ra);
 	
 	regs->x[10] = 0;
+
 	new_task->thread.sepc = regs->sepc ;
+	printk("new_task->thread.sepc = %lx\n", new_task->thread.sepc);
 	new_task->thread.sscratch = old_sp; // 用户栈指针
-	
+	new_task->thread_info.user_sp = old_sp;
 	//之前的用户栈 sp 交换到了 sscratch
 	
 	
 	// 为 child task 申请 user stack，并将 parent task 的 user stack 数据复制到其中。
 	uint64 user_stack = alloc_page();
-	memcpy((uint64_t *)user_stack, current->thread.sp, PGSIZE);
-	printk("user_stack = %lx\n", current->thread.sp);
+	memcpy((uint64_t *)user_stack, USER_END-PGSIZE, PGSIZE);
 	create_mapping((uint64*)new_task->pgd, USER_END - PGSIZE, user_stack - PA2VA_OFFSET, PGSIZE, PTE_R | PTE_W | PTE_U | PTE_V);
-
+	
 	// 为 child task 分配一个根页表，并仿照 setup_vm_final 来创建内核空间的映射
 	new_task->pgd = alloc_page();
 	memcpy(new_task->pgd, swapper_pg_dir, PGSIZE);
@@ -56,7 +57,7 @@ uint64 sys_clone(struct pt_regs* regs){
 
 	for (int i = 0; i < current->vma_cnt; i++) {
 		struct vm_area_struct *vma = &(current->vmas[i]);
-		uint64 va = PGROUNDDOWN(vma->vm_start);
+		uint64 va = vma->vm_start;
 		int p_memsz = vma->vm_end - vma->vm_start;
 		uint64_t flag =  PTE_U | PTE_V;
         uint64_t p_flag = vma->vm_flags;
@@ -66,8 +67,8 @@ uint64 sys_clone(struct pt_regs* regs){
 		uint64 user_space = alloc_page(PGROUNDUP(p_memsz)>>12);
 		uint64 p_offset = vma->vm_content_offset_in_file;
 		uint64 p_filesz = vma->vm_content_size_in_file;
-		memcpy(user_space+ p_offset,vma->vm_start ,p_memsz);
-		create_mapping((uint64*)new_task->pgd, va, user_space + p_offset - PA2VA_OFFSET, p_memsz, flag);
+		memcpy(user_space + p_offset,vma->vm_start ,p_memsz);
+		create_mapping((uint64*)new_task->pgd, va, user_space + p_offset - PA2VA_OFFSET, PGROUNDUP(p_memsz), flag);
 	}
 	// . 根据 parent task 的页表和 vma 来分配并拷贝 child task 在用户态会用到的内存
 
@@ -146,8 +147,9 @@ void trap_handler(unsigned long scause, unsigned long sepc ,struct pt_regs* regs
 					regs->x[10] = ret;
 					break;
 				case 220: // SYS_CLONE  
+					ret = sys_clone(regs);
 					regs->sepc = regs->sepc + 0x4;
-					regs->x[10] = sys_clone(regs);
+					regs->x[10] = ret;
 					break;
 				}
 				// regs->sepc = regs->sepc + 0x4;
@@ -155,59 +157,39 @@ void trap_handler(unsigned long scause, unsigned long sepc ,struct pt_regs* regs
 				// regs->x[10] = ret;
 			break;
 
-			case 12:
-			case 13:
-			case 15:
-			printk("Page Fault! on %lx\n", stval);       
-			
-			// for(int i = 0 ;i < current->vma_cnt ; i++){
-			// 	printk("vma[%d] = %lx\n", i, current->vmas[i].vm_start);
-			// 	printk("vma[%d] = %lx\n", i, current->vmas[i].vm_end);
-			// 	printk("vma[%d] = %lx\n", i, current->vmas[i].vm_content_offset_in_file);
-			// 	printk("vma[%d] = %lx\n", i, current->vmas[i].vm_content_size_in_file);
-			// 	printk("vma[%d] = %lx\n", i, current->vmas[i].vm_flags);
-			// 	printk("地址vma[%d] = %lx\n", i, &(current->vmas[i]));
-			// }
-			struct vm_area_struct* vma = find_vma(current, stval);
-			printk("%lx\n", vma);
-			if (scause == 12) {
-				
-				//如果访问的页是存在数据的，如访问的是代码，则需要从文件系统中读取内容，随后进行映射
-			uint64 va = PGROUNDDOWN(stval);
-			int pmemsz = vma->vm_end - vma->vm_start;
-			uint64 p_offset = vma->vm_content_offset_in_file;
-			uint64 pfilesz = vma->vm_content_size_in_file;
-			uint64_t flag =  PTE_U | PTE_V;
-            uint64_t p_flag = vma->vm_flags;
-            if (p_flag & 1) flag |= PTE_X;
-            if (p_flag & 2) flag |= PTE_W;
-            if (p_flag & 4) flag |= PTE_R;
-			
-			if(current->thread_info.kernel_sp == 0x54188){
-				current->thread_info.kernel_sp = 0;
-				// create_mapping((uint64*)current->pgd, stval, user_space + p_offset - PA2VA_OFFSET, pmemsz, flag);
-				return;
-			}
-			int pgcnt = PGROUNDUP(pmemsz)>>12;
-			uint64 user_space = alloc_page(pgcnt);
-			memset(user_space, 0, pgcnt*PGSIZE);
-			uint64 pa = user_space + p_offset - PA2VA_OFFSET;
-			memcpy(user_space + p_offset,_sramdisk + p_offset,pmemsz);
-			
-			memset(user_space + p_offset + pfilesz, 0, pmemsz - pfilesz);
-			create_mapping((uint64*)current->pgd, va, pa, pmemsz, flag);
-			
-			
-
-			
-			} else {
-				//否则是匿名映射，即找一个可用的帧映射上去即可
+			case 12: // instruction fetch
+			case 13: // read
+			case 15: // write
+				printk("Page Fault! on %lx\n", stval);       
 				uint64 va = PGROUNDDOWN(stval);
-				uint64 user_stack = alloc_page();
-				uint64 perm = vma->vm_flags | PTE_U | PTE_V;
-        		create_mapping((uint64*)current->pgd, va, user_stack - PA2VA_OFFSET, PGSIZE, PTE_R | PTE_W | PTE_U | PTE_V);
-			}
-			// regs->sepc = regs->sepc + 0x4;
+				struct vm_area_struct* vma = find_vma(current, stval);
+				uint64_t p_flag = vma->vm_flags;
+				if (scause == 12) {
+				//代码，则需要从文件系统中读取内容，随后进行映射
+					int pmemsz = vma->vm_end - vma->vm_start;
+					uint64 p_offset = vma->vm_content_offset_in_file;
+					uint64 pfilesz = vma->vm_content_size_in_file;
+					uint64_t flag =  PTE_U | PTE_V;
+					
+					if (p_flag & 1) flag |= PTE_X;
+					if (p_flag & 2) flag |= PTE_W;
+					if (p_flag & 4) flag |= PTE_R;
+
+					int pgcnt = PGROUNDUP(pmemsz)>>12;
+					uint64 user_space = alloc_page(pgcnt);
+					memset(user_space, 0, pgcnt*PGSIZE);
+					uint64 pa = user_space + p_offset - PA2VA_OFFSET;
+					printk("p_offset = %lx\n",p_offset);
+					printk("stval& 0xfff = %lx", stval& 0xfff);
+					memcpy(user_space + (stval & 0xfff),_sramdisk + p_offset,pfilesz);
+					create_mapping((uint64*)current->pgd, va, pa, pgcnt*PGSIZE, flag);
+				} else {
+					//否则是匿名映射，即找一个可用的帧映射上去即可
+					uint64 user_stack = alloc_page();
+					uint64 perm = vma->vm_flags | PTE_U | PTE_V;
+					create_mapping((uint64*)current->pgd, va, user_stack - PA2VA_OFFSET, PGSIZE, PTE_R | PTE_W | PTE_U | PTE_V);
+				}
+				// regs->sepc = regs->sepc + 0x4;
 			
 			break;
 

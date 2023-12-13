@@ -43,40 +43,24 @@ struct vm_area_struct *find_vma(struct task_struct *task, uint64_t addr)
 void do_mmap(struct task_struct *task, uint64_t addr, uint64_t length, uint64_t flags,
     uint64_t vm_content_offset_in_file, uint64_t vm_content_size_in_file)
 {
-    if (task == NULL)
-        return;
-
-    // // 1. 检查 addr 是否已经被映射
-    struct vm_area_struct *existing_vma = find_vma(task, addr);
-    // if (existing_vma != NULL)
-    //     return;
-
-    // // 2. 检查 addr + length - 1 是否已经被映射
-    // existing_vma = find_vma(task, addr + length - 1);
-    // if (existing_vma != NULL)
-    //     return;
-
-    // 3. 检查 addr ~ addr + length - 1 之间是否有重叠的 VMA
-    // existing_vma = task->vmas;
-    // while (existing_vma != NULL) {
-    //     if ((addr >= existing_vma->vm_start && addr < existing_vma->vm_end) ||
-    //         (addr + length > existing_vma->vm_start && addr + length <= existing_vma->vm_end))
-    //         return;
-    //     existing_vma++;
-    // }
-
-    // 4. 为新的 VMA 分配空间
     struct vm_area_struct *new_vma = task->vmas + task->vma_cnt;
     task->vma_cnt++;
     new_vma->vm_start = addr;
     new_vma->vm_end = addr + length;
-    // printk("[S]vm_start = %lx\n", new_vma->vm_start);
-    // printk("[S]vm_end = %lx\n", new_vma->vm_end);
-    // printk("end - start = %lx\n", new_vma->vm_end - new_vma->vm_start);
     new_vma->vm_flags = flags;
     new_vma->vm_content_offset_in_file = vm_content_offset_in_file;
     new_vma->vm_content_size_in_file = vm_content_size_in_file;
     
+}
+void printvma(){
+    for(int i = 0; i < current->vma_cnt; ++i){
+        printk("vma[%d] = %lx\n", i, current->vmas[i]);
+        printk("vma[%d] = %lx\n", i, current->vmas[i].vm_start);
+		printk("vma[%d] = %lx\n", i, current->vmas[i].vm_end);
+		printk("vma[%d] = %lx\n", i, current->vmas[i].vm_content_offset_in_file);
+		printk("vma[%d] = %lx\n", i, current->vmas[i].vm_content_size_in_file);
+		printk("vma[%d] = %lx\n", i, current->vmas[i].vm_flags);
+    }
 }
 
 
@@ -102,7 +86,7 @@ static uint64 load_program(struct task_struct* task) {
             // uint64 pg_cnt = phdr->p_filesz/PGSIZE + (phdr->p_filesz % PGSIZE != 0);
             uint64 pg_cnt = PGROUNDUP(p_mem_sz)>>12;
             //调用 alloc_page 函数为程序分配相应数量的页
-            uint64 user_space = alloc_page(pg_cnt);
+            // uint64 user_space = alloc_page(pg_cnt);
             // memset((char*)user_space, 0, p_mem_sz); 
             
             uint64 p_offset = phdr->p_offset;
@@ -250,7 +234,7 @@ void switch_to(struct task_struct* next) {
 	struct task_struct* prev = current;
 	current = next;
 	printk("switch to [pid = %d COUNTER = %d]\n", next->pid,next->counter);
-    // printTaskStruct(prev);
+    printTaskStruct(prev);
     // printTaskStruct(next);
 	__switch_to(prev, next);
 }

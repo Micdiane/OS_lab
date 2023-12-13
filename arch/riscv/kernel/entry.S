@@ -115,7 +115,9 @@ kk:
 	ld t0,264(sp)
     csrw sstatus, t0
     ld t0, 256(sp)
-    addi t0,t0,-4
+    # li t0, 0x10134 - 0x4 * -1
+    csrr t0,sepc
+    # addi t0,t0,-4
     csrw sepc, t0
     ld x0, 0(sp)
     ld x1, 8(sp)
